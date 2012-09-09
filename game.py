@@ -8,7 +8,6 @@ import tty
 import termios
 
 from log import LOG
-from blocks import *
 
 from board import TetrisBoard
 from engine import TetrisEngine, GameState
@@ -33,6 +32,17 @@ def getch():
 class TetrisGame:
     def __init__(self):
         self.game_state = GameState(TetrisBoard())
+
+        #from blocks import BlockLine, BlockRightL, BlockCube
+        #l = BlockLine()
+        #l.rotate()
+        #r = BlockRightL()
+        #r.rotate(-1)
+        #c = BlockCube()
+        #self.game_state.board.place_block(l, (-1,0))
+        #self.game_state.board.place_block(r, (1,0))
+        #self.game_state.board.place_block(c, (8,0))
+
         self.engine = TetrisEngine(self.game_state)
         self.ai = TetrisAI(self.engine)
 
@@ -52,9 +62,9 @@ class TetrisGame:
                 if c == RIGHT_KEY:
                     self.engine.move_right()
                 if c == DOWN_KEY:
-                    LOG.debug("XXX: %s" % self.engine.move_down())
+                    self.engine.move_down()
                 if c == DROP_KEY:
-                    LOG.debug("XXX: %s" % self.engine.drop_block())
+                    self.engine.drop_block()
                 if c == UP_KEY:
                     self.engine.rotate()
             except KeyboardInterrupt:

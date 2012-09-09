@@ -1,3 +1,4 @@
+import rpdb2
 import threading
 import time
 import random
@@ -48,11 +49,16 @@ class TetrisEngine(object):
             while not self._exiting:
                 a = time.time()
                 while time.time()-a < DROPPING_TIMEOUT \
-                        and not self._exiting and not self._restart_timeout:
+                        and not self._exiting and not self._restart_timeout \
+                        and not self.game_state.game_is_over():
                     time.sleep(0.1)
 
-                if not self._exiting and not self._restart_timeout:
+                if not self._exiting and not self._restart_timeout \
+                    and not self.game_state.game_is_over():
                     self._drop_timeout_update()
+
+                if self.game_state.game_is_over():
+                    self._exiting = True
 
                 self._restart_timeout = False
 
@@ -142,25 +148,33 @@ class GameState(object):
 
         self.completed_lines = 0
 
-    def copy(self):
-        o = copy.copy(self)
-        o.drop_block = copy.deepcopy(self.drop_block)
-        o.drop_position = copy.deepcopy(self.drop_position)
-
     def start_new_drop(self, block=None):
         if not block:
            block = random.choice(BLOCKS)()
            #block = BLOCKS[6]()
 
+        LOG.debug("Top Padding: %d" % block.top_padding)
+        x, y = block.get_raw_position((self.board.width/2-1,
+            self.board.height - block.height + block.top_padding + block.bottom_padding))
+
+        while not self.board.block_fits(block, (x,y)):
+            real_y = block.get_real_position((x,y))[1]
+            if real_y >= self.board.height:
+                LOG.debug("Trying to start new drop with %s but top limit reached" % block)
+                self._game_over = True
+                return
+            y += 1
+
         self.drop_block = block
-        self.drop_position = (self.board.width/2-1,
-                            self.board.height-block.height)
+        self.drop_position = (x, y)
 
         LOG.debug("Starting new drop: %s" % self)
 
     def move_block_down(self):
         #LOG.debug("game_state: trying to move down %s at (%d,%d)" %
         #    (self.drop_block,self.drop_position[0], self.drop_position[1]))
+
+        x, y = (self.drop_position[0], self.drop_position[1])
 
         if self.drop_block_is_stuck():
             self.board.place_block(self.drop_block, self.drop_position)
@@ -179,54 +193,42 @@ class GameState(object):
         return self._move_if_valid(x, y)
 
     def _move_if_valid(self, x, y):
-        for xblock, yblock in self.drop_block.get_solid_squares():
-            final_x, final_y = x+xblock, y+yblock
-            if not self.board.valid_position(final_x, final_y, True) \
-               or self.board.block_at(final_x, final_y):
-                   return False
+        if not self.board.block_fits(self.drop_block, (x,y)):
+            return False
 
         self.drop_position = (x, y)
         return True
 
     def drop_block_is_stuck(self):
-        xpos, ypos = self.drop_position
+        x_pos, y_pos = self.drop_position
         drop_block = self.drop_block
 
-        vertical_padding = 0
-        for y in xrange(drop_block.height):
-            if drop_block.get_solid_squares(y=y):
-                vertical_padding = y
-                break
-
-        if ypos+vertical_padding == 0:
+        if y_pos+drop_block.bottom_padding == 0:
             return True
 
-        for xblock in xrange(drop_block.width):
-            yblock = drop_block.column_first_square(xblock)
-            if yblock is None:
+        for x_block in xrange(drop_block.width):
+            column_squares = drop_block.get_solid_squares(x=x_block)
+            if not column_squares:
                 # avoid empty columns
                 continue
+            y_block = column_squares[0][1]
 
-            down_block = self.board.block_at(xpos+xblock, ypos+yblock-1)
+            down_block = self.board.block_at(x_pos+x_block, y_pos+y_block-1)
             if down_block:
                 return True
         return False
 
     def rotate_block(self, times=1):
-        if self._rotation_is_valid(times):
-            self.drop_block.rotate(times)
-            return True
-        return False
+        if not self._rotation_is_valid(times):
+            return False
+
+        self.drop_block.rotate(times)
+
+        return True
 
     def _rotation_is_valid(self, times=1):
-        x, y = self.drop_position
         rotated = self.drop_block.get_rotated(times)
-        for xblock, yblock in rotated.get_solid_squares():
-            final_x, final_y = x+xblock, y+yblock
-            if not self.board.valid_position(final_x, final_y, True) \
-               or self.board.block_at(final_x, final_y):
-                return False
-        return True
+        return self.board.block_fits(rotated, self.drop_position)
 
     def clear_completed_lines(self):
         lines_done = 0
@@ -272,9 +274,10 @@ class GameState(object):
                     block = self.board.block_at(x, y)
 
                 if block != None:
-                    line_str[x*3] = "|"
+                    line_str[x*3] = "|"#paint_block_color("|", block, True)
                     line_str[x*3+1] = paint_block_color("_", block)
-                    line_str[x*3+2] = "|"
+                    line_str[x*3+2] = "|"#paint_block_color("|", block, True)
+
                     if out:
                         # work on the top border of a block's square
                         # it can be either a placed block or the dropping block
@@ -282,9 +285,11 @@ class GameState(object):
                             up_block = self.drop_block
                         else:
                             up_block = self.board.block_at(x,y+1)
-                        s = "_"
+
                         if up_block:
                             s = paint_block_color("_", up_block)
+                        else:
+                            s = "_"#paint_block_color("_", block, True)
                         out[-1][x*3+1] = s
 
             out.append(line_str)
@@ -303,5 +308,8 @@ class GameState(object):
         out_str = "\n".join(map("".join, out))
 
         out_str += "\nDone lines: %d" % self.completed_lines
+
+        if self._game_over:
+            out_str += "\n------ GAME OVER!!!! --------"
 
         return out_str
