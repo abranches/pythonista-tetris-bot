@@ -1,5 +1,5 @@
 import copy
-from PIL import Image, ImageStat
+#from PIL import Image, ImageStat
 
 from log import LOG
 
